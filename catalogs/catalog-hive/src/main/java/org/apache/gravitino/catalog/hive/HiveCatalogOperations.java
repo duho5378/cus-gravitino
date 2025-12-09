@@ -149,8 +149,8 @@ public class HiveCatalogOperations implements CatalogOperations, SupportsSchemas
     Map<String, String> gravitinoConfig = Maps.newHashMap();
 
     if (conf.containsKey("hive.database.prefix")) {
-            this.databasePrefix = conf.get("hive.database.prefix");
-        }
+      this.databasePrefix = conf.get("hive.database.prefix");
+    }
 
     conf.forEach(
         (key, value) -> {
@@ -330,31 +330,32 @@ public class HiveCatalogOperations implements CatalogOperations, SupportsSchemas
   @Override
   public NameIdentifier[] listSchemas(Namespace namespace) throws NoSuchCatalogException {
     try {
-      return clientPool.run(client -> {
+      return clientPool.run(
+          client -> {
             // Bước 1: Lấy toàn bộ danh sách database từ Hive Metastore
             // (Hive chưa hỗ trợ filter native tốt nên phải lấy hết về memory)
             List<String> allDatabases = client.getAllDatabases();
-            
+
             // Bước 2: Tạo Stream để xử lý
             java.util.stream.Stream<String> dbStream = allDatabases.stream();
 
             // Bước 3: Áp dụng bộ lọc (Filter) nếu có cấu hình prefix
             // Logic: Chỉ giữ lại các DB bắt đầu bằng prefix đã cấu hình
             if (this.databasePrefix != null && !this.databasePrefix.isEmpty()) {
-                dbStream = dbStream.filter(dbName -> dbName.startsWith(this.databasePrefix));
+              dbStream = dbStream.filter(dbName -> dbName.startsWith(this.databasePrefix));
             }
 
             // Bước 4: Convert sang NameIdentifier của Gravitino
             return dbStream
                 .map(dbName -> NameIdentifier.of(namespace, dbName))
                 .toArray(NameIdentifier[]::new);
-      });
+          });
 
     } catch (TException e) {
       throw new RuntimeException(
           "Failed to list schemas (databases) under namespace : "
               + namespace
-              + " in Hive Metastore with prefix filter: " 
+              + " in Hive Metastore with prefix filter: "
               + (this.databasePrefix != null ? this.databasePrefix : "NONE"),
           e);
 
@@ -427,13 +428,16 @@ public class HiveCatalogOperations implements CatalogOperations, SupportsSchemas
     // --- BẮT ĐẦU LOGIC LỌC PREFIX ---
     // Kiểm tra xem tên DB có khớp với prefix cấu hình không.
     // Nếu không khớp, ném lỗi "Không tìm thấy" ngay lập tức để chặn truy cập.
-    if (this.databasePrefix != null && !this.databasePrefix.isEmpty() 
+    if (this.databasePrefix != null
+        && !this.databasePrefix.isEmpty()
         && !dbName.startsWith(this.databasePrefix)) {
-      
+
       // Log cảnh báo để admin biết có người cố truy cập DB không được phép
-      LOG.warn("Access denied: Attempted to load schema '{}' which does not match catalog prefix '{}'", 
-          dbName, this.databasePrefix);
-      
+      LOG.warn(
+          "Access denied: Attempted to load schema '{}' which does not match catalog prefix '{}'",
+          dbName,
+          this.databasePrefix);
+
       throw new NoSuchSchemaException("Hive schema (database) does not exist: %s", dbName);
     }
     // --- KẾT THÚC LOGIC LỌC PREFIX ---
