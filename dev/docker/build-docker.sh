@@ -138,19 +138,26 @@ else
 fi
 
 cd ${script_dir}/${component_type}
-# --- BẮT ĐẦU ĐOẠN CODE SỬA ---
+# --- BẮT ĐẦU FIX: Tự động ép về linux/amd64 nếu script nhận diện sai ---
 if [[ "${platform_type}" == "all" ]]; then
-  # Nếu là "all", bắt buộc phải push (vì Docker không cho load nhiều platform 1 lúc)
-  # Nhưng vì bạn không có quyền push, ta sẽ báo lỗi để bạn biết mà sửa tham số.
-  echo "ERROR: Bạn không thể dùng 'all' platform khi build local (--load)."
-  echo "Hãy thêm tham số: --platform linux/amd64 vào câu lệnh chạy."
-  exit 1
+  echo "⚠️  Phát hiện Platform là 'all'. Đang tự động chuyển sang 'linux/amd64' để build local..."
+  platform_type="linux/amd64"
+fi
+# --- KẾT THÚC FIX ---
+
+# Bây giờ logic bên dưới sẽ luôn chạy vào nhánh ELSE (nhánh dùng --load)
+if [[ "${platform_type}" == "all" ]]; then
+  # Nhánh này sẽ không bao giờ chạy vào nữa nhờ đoạn Fix ở trên
+  if [ ${build_latest} -eq 1 ]; then
+    docker buildx build --builder ${BUILDER_NAME} --no-cache --pull --platform=linux/amd64,linux/arm64 ${build_args} --push --progress plain -f Dockerfile -t ${image_name}:latest -t ${image_name}:${tag_name} .
+  else
+    docker buildx build --builder ${BUILDER_NAME} --no-cache --pull --platform=linux/amd64,linux/arm64 ${build_args} --push --progress plain -f Dockerfile -t ${image_name}:${tag_name} .
+  fi
 else
-  # Nếu là 1 platform cụ thể, dùng --load để lưu vào máy
+  # Nhánh này dùng --load (Lưu vào máy)
   if [ ${build_latest} -eq 1 ]; then
     docker buildx build --builder ${BUILDER_NAME} --no-cache --pull --platform=${platform_type} ${build_args} --load --progress plain -f Dockerfile -t ${image_name}:latest -t ${image_name}:${tag_name} .
   else
     docker buildx build --builder ${BUILDER_NAME} --no-cache --pull --platform=${platform_type} ${build_args} --load --progress plain -f Dockerfile -t ${image_name}:${tag_name} .
   fi
 fi
-# --- KẾT THÚC ĐOẠN CODE SỬA ---
