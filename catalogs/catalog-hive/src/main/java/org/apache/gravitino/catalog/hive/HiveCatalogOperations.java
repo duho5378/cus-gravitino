@@ -434,7 +434,7 @@ public class HiveCatalogOperations implements CatalogOperations, SupportsSchemas
       LOG.warn("Access denied: Attempted to load schema '{}' which does not match catalog prefix '{}'", 
           dbName, this.databasePrefix);
       
-      throw new NoSuchSchemaException("Hive schema (database) does not exist: " + dbName);
+      throw new NoSuchSchemaException("Hive schema (database) does not exist: %s", dbName);
     }
     // --- KẾT THÚC LOGIC LỌC PREFIX ---
 
