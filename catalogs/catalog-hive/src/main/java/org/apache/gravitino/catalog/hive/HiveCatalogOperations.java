@@ -101,6 +101,8 @@ import org.slf4j.LoggerFactory;
 /** Operations for interacting with an Apache Hive catalog in Apache Gravitino. */
 public class HiveCatalogOperations implements CatalogOperations, SupportsSchemas, TableCatalog {
 
+  private String databasePrefix = null;
+
   public static final Logger LOG = LoggerFactory.getLogger(HiveCatalogOperations.class);
   public static final String GRAVITINO_KEYTAB_FORMAT = "keytabs/gravitino-hive-%s-keytab";
 
@@ -145,6 +147,10 @@ public class HiveCatalogOperations implements CatalogOperations, SupportsSchemas
     Map<String, String> byPassConfig = Maps.newHashMap();
     // Hold keys that lie in GRAVITINO_CONFIG_TO_HIVE
     Map<String, String> gravitinoConfig = Maps.newHashMap();
+
+    if (conf.containsKey("hive.database.prefix")) {
+            this.databasePrefix = conf.get("hive.database.prefix");
+        }
 
     conf.forEach(
         (key, value) -> {
@@ -324,23 +330,37 @@ public class HiveCatalogOperations implements CatalogOperations, SupportsSchemas
   @Override
   public NameIdentifier[] listSchemas(Namespace namespace) throws NoSuchCatalogException {
     try {
-      NameIdentifier[] schemas =
-          clientPool.run(
-              c ->
-                  c.getAllDatabases().stream()
-                      .map(db -> NameIdentifier.of(namespace, db))
-                      .toArray(NameIdentifier[]::new));
-      return schemas;
+      return clientPool.run(client -> {
+            // Bước 1: Lấy toàn bộ danh sách database từ Hive Metastore
+            // (Hive chưa hỗ trợ filter native tốt nên phải lấy hết về memory)
+            List<String> allDatabases = client.getAllDatabases();
+            
+            // Bước 2: Tạo Stream để xử lý
+            java.util.stream.Stream<String> dbStream = allDatabases.stream();
+
+            // Bước 3: Áp dụng bộ lọc (Filter) nếu có cấu hình prefix
+            // Logic: Chỉ giữ lại các DB bắt đầu bằng prefix đã cấu hình
+            if (this.databasePrefix != null && !this.databasePrefix.isEmpty()) {
+                dbStream = dbStream.filter(dbName -> dbName.startsWith(this.databasePrefix));
+            }
+
+            // Bước 4: Convert sang NameIdentifier của Gravitino
+            return dbStream
+                .map(dbName -> NameIdentifier.of(namespace, dbName))
+                .toArray(NameIdentifier[]::new);
+      });
 
     } catch (TException e) {
       throw new RuntimeException(
-          "Failed to list all schemas (database) under namespace : "
+          "Failed to list schemas (databases) under namespace : "
               + namespace
-              + " in Hive Metastore",
+              + " in Hive Metastore with prefix filter: " 
+              + (this.databasePrefix != null ? this.databasePrefix : "NONE"),
           e);
 
     } catch (InterruptedException e) {
-      throw new RuntimeException(e);
+      Thread.currentThread().interrupt(); // Best practice: Restore interrupted status
+      throw new RuntimeException("Interrupted while listing schemas", e);
     }
   }
 
@@ -402,22 +422,40 @@ public class HiveCatalogOperations implements CatalogOperations, SupportsSchemas
    */
   @Override
   public HiveSchema loadSchema(NameIdentifier ident) throws NoSuchSchemaException {
+    String dbName = ident.name();
+
+    // --- BẮT ĐẦU LOGIC LỌC PREFIX ---
+    // Kiểm tra xem tên DB có khớp với prefix cấu hình không.
+    // Nếu không khớp, ném lỗi "Không tìm thấy" ngay lập tức để chặn truy cập.
+    if (this.databasePrefix != null && !this.databasePrefix.isEmpty() 
+        && !dbName.startsWith(this.databasePrefix)) {
+      
+      // Log cảnh báo để admin biết có người cố truy cập DB không được phép
+      LOG.warn("Access denied: Attempted to load schema '{}' which does not match catalog prefix '{}'", 
+          dbName, this.databasePrefix);
+      
+      throw new NoSuchSchemaException("Hive schema (database) does not exist: " + dbName);
+    }
+    // --- KẾT THÚC LOGIC LỌC PREFIX ---
+
     try {
-      Database database = clientPool.run(client -> client.getDatabase(ident.name()));
+      Database database = clientPool.run(client -> client.getDatabase(dbName));
       HiveSchema hiveSchema = HiveSchema.fromHiveDB(database);
 
-      LOG.info("Loaded Hive schema (database) {} from Hive Metastore ", ident.name());
+      LOG.info("Loaded Hive schema (database) {} from Hive Metastore ", dbName);
       return hiveSchema;
 
     } catch (NoSuchObjectException | UnknownDBException e) {
       throw new NoSuchSchemaException(
-          e, "Hive schema (database) does not exist: %s in Hive Metastore", ident.name());
+          e, "Hive schema (database) does not exist: %s in Hive Metastore", dbName);
 
     } catch (TException e) {
       throw new RuntimeException(
-          "Failed to load Hive schema (database) " + ident.name() + " from Hive Metastore", e);
+          "Failed to load Hive schema (database) " + dbName + " from Hive Metastore", e);
 
     } catch (InterruptedException e) {
+      // Best practice: Khôi phục trạng thái interrupt cho thread
+      Thread.currentThread().interrupt();
       throw new RuntimeException(e);
     }
   }
